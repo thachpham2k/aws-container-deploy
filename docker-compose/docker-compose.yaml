@@ -1,0 +1,59 @@
+services:
+  web:
+    container_name: nginx
+    image: nginx
+    restart: always
+    volumes:
+      - ../src/nginx/nginx.conf:/tmp/nginx.conf
+    environment: 
+      - BACKEND_SERVER_ADDR=backend:8080
+    command: /bin/bash -c "envsubst < /tmp/nginx.conf > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'" 
+    ports:
+      - 80:80
+    networks:
+      - backend-net
+    depends_on:
+      - backend
+  backend:
+    container_name: backend
+    build:
+      context: ../src/backend
+    restart: always
+    environment:
+      - POSTGRES_HOST=database
+      - POSTGRES_DB=example
+    secrets:
+      - db-password
+    networks:
+      - backend-net
+    # depends_on:
+    #   database:
+    #     condition: service_healthy
+
+  database:
+    container_name: database
+    image: postgres
+    restart: always
+    # healthcheck:
+    #   test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+    #   interval: 3s
+    #   retries: 5
+    #   start_period: 30s
+    secrets:
+      - db-password
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    networks:
+      - backend-net
+    environment:
+      - POSTGRES_DB=example
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db-password
+    expose:
+      - 5432
+volumes:
+  db-data:
+secrets:
+  db-password:
+    file: ../src/database/password.txt
+networks:
+  backend-net:
