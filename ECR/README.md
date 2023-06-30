@@ -7,6 +7,9 @@ aws ecr create-repository \
         --region ap-southeast-1 \
         --tags '[{"Key":"purpose", "Value":"test"}, {"Key":"project", "Value":"aws-container-deploy"}, {"Key":"author", "Value":"pthach"}]'
 ```
+> ECR repository created
+
+![ECR repository created](./img/ECR-created.png "ECR repository created success")
 
 ## Login to AWS CLI
 ```shell
@@ -28,17 +31,20 @@ docker images --filter reference=container-image
 
 ## Tag the image to push to your repository.
 ```shell
-docker tag container-image:latest aws_account_id.dkr.ecr.region.amazonaws.com/container-image
+docker tag container-image:latest aws_account_id.dkr.ecr.ap-southeast-1.amazonaws.com/container-image
 ```
 
 ## Push to AWS
 ```shell
-docker push aws_account_id.dkr.ecr.region.amazonaws.com/container-image
+docker push aws_account_id.dkr.ecr.ap-southeast-1.amazonaws.com/container-image
 ```
+> Push image to AWS ECR success
+
+![](./img/ECR-pushed-success.png)
 
 ## Pull image from ECR
 ```shell
-docker pull aws_account_id.dkr.ecr.region.amazonaws.com/container-image:latest
+docker pull aws_account_id.dkr.ecr.ap-southeast-1.amazonaws.com/container-image:latest
 ```
 
 ## Delete image in ECR
