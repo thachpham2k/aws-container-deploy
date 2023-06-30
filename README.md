@@ -6,6 +6,10 @@ I am  using spring-postgres project in [awesome-compose](https://github.com/dock
 
 # Using `docker-compose` to deploy in EC2
 
-[Docker compose](./docker-compose/)
+[Docker compose](./docker-compose/README.md)
+
+# Push Docker image to AWS ECR
+
+[Push to ECR](./ECR/README.md)
 
 # EKS Deploy
