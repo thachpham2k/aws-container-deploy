@@ -46,7 +46,7 @@ docker pull aws_account_id.dkr.ecr.region.amazonaws.com/container-image:latest
 aws ecr batch-delete-image \
       --repository-name container-image \
       --image-ids imageTag=latest \
-      --region region
+      --region ap-southeast-1
 ```
 
 ## Delete Repository
