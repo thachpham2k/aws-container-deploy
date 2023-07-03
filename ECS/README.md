@@ -2,6 +2,13 @@
 
 ## Variable init
 ```shell
+sudo apt update -y
+sudo apt install jq awscli tee -y
+cat <<EOF | tee ~/.aws/config
+[default]
+region = ap-southeast-1
+output = json
+EOF
 # global architect
 region=ap-southeast-1
 az_01=ap-southeast-1a
@@ -10,8 +17,6 @@ az_02=ap-southeast-1b
 tags='[{"key":"purpose", "value":"test"}, {"key":"project", "value":"aws-container-deploy"}, {"key":"author", "value":"pthach"}]'
 tags2='[{"Key":"purpose", "Value":"test"}, {"Key":"project", "Value":"aws-container-deploy"}, {"Key":"author", "Value":"pthach"}]'
 tagspec=Tags=[{Key=Name,Value=ecsvpc},{Key=purpose,Value=test},{Key=project,Value=aws-container-deploy},{Key=author,Value=pthach}]
-vpc_tagspec='ResourceType=vpc,Tags=[{Key=Name,Value=ecsvpc},{Key=purpose,Value=test},{Key=project,Value=aws-container-deploy},{Key=author,Value=pthach}]'
-subnet_tagspec='ResourceType=subnet,Tags=[{Key=Name,Value=ecsvpc},{Key=purpose,Value=test},{Key=project,Value=aws-container-deploy},{Key=author,Value=pthach}]'
 # SecretManager
 database_psswd=db-1357
 # ECS
@@ -19,8 +24,8 @@ cluster_name=aws-container-deploy-cluster
 backend_task_definition=backend-td
 proxy_task_definition=nginx-td
 database_task_definition=database-td
-backend_image=???
-proxy_image=???
+backend_image=914706199417.dkr.ecr.ap-southeast-1.amazonaws.com/backend-image:latest
+proxy_image=914706199417.dkr.ecr.ap-southeast-1.amazonaws.com/proxy-image:latest
 # network
 vpc_cidr=10.0.0.0/16
 pubsubnet1_cidr=10.0.0.0/20
@@ -38,7 +43,7 @@ sgr_name=aws-container-deploy-sgr
 aws ecs create-cluster \
     --cluster-name $cluster_name \
     --region $region \
-    --tags $tags
+    --tags "$tags"
 
 # Check ECS Cluster created correctly
 aws ecs list-clusters
@@ -169,8 +174,8 @@ aws iam create-role \
             "Action": ["sts:AssumeRole"]
         }]
     }' \
-    --tags = $tags
-
+    --tags "$tags2"
+    
 aws iam attach-role-policy \
     --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role \
     --role-name $role_name
@@ -193,16 +198,20 @@ ecs_ami=$(aws ssm get-parameters \
     --region $region | jq -r '.Parameters[0].Value | fromjson.image_id')
 
 # Create EC2
+cat <<EOF | tee ecs-userdata.txt
+#!/bin/bash
+echo ECS_CLUSTER=`echo -n $cluster_name` >> /etc/ecs/ecs.config
+EOF
+
 ecs_instance_id=$(aws ec2 run-instances \
     --image-id $ecs_ami \
     --count 1 \
-    --instance-type t2.micro \
+    --instance-type t3.medium \
     --subnet-id $subnet_public_1 \
     --key-name $key_name \
     --security-group-ids $security_group_id \
     --associate-public-ip-address \
-    --user-data '#!/bin/bash
-echo ECS_CLUSTER=aws-container-deploy >> /etc/ecs/ecs.config' \
+    --user-data  file://ecs-userdata.txt \
     --tag-specifications `echo "ResourceType=instance,$tagspec"` | jq -r '.Instances[0].InstanceId')
 
 aws ec2 associate-iam-instance-profile \
@@ -215,7 +224,7 @@ aws ec2 associate-iam-instance-profile \
 aws secretsmanager create-secret \
     --name databaseSecret \
     --description "To save database information" \
-    --tags $tags2 \
+    --tags "$tags2" \
     --secret-string `echo "{\"user\":\"root\",\"POSTGRES_PASSWORD\":\"$database_psswd\"}"`
     
 # --secret-string file://../src/database/password.txt
@@ -227,40 +236,37 @@ aws secretsmanager create-secret \
 sm_databasepsswd_arn=$(aws secretsmanager describe-secret --secret-id databaseSecret --query 'ARN' --output text)
 
 # Create Task Definition for portgress database
+cat <<EOF | tee database-definition.json
+{
+    "name": "`echo -n $database_task_definition`",
+    "image": "postgres",
+    "essential": true,
+    "portMappings": [
+        {
+            "containerPort": 5432,
+            "hostPort": 5432
+        }
+    ],
+    "environment" : [
+        {
+                    "name" : "POSTGRES_DB",
+            "value" : "example"
+        },
+        {
+            "name" : "POSTGRES_PASSWORD",
+            "value" : "`echo -n $sm_databasepsswd_arn`:POSTGRES_PASSWORD"
+        }
+    ]
+}
+EOF
 ecs_database_task_definition=$(aws ecs register-task-definition \
     --family $database_task_definition \
     --network-mode awsvpc \
     --requires-compatibilities EC2 \
-    --cpu "256" \
-    --memory "512" \
-    --tags $tags \
-    --container-definitions '[
-        {
-            "name": "$database_task_definition",
-            "image": "postgres",
-            "essential": true,
-            "restartPolicy" : {
-                "condition" :	"RESTART_POLICY",
-                "maximumRetryCount" :	123
-            },
-            "portMappings": [
-                {
-                    "containerPort": 5432,
-                    "hostPort": 5432
-                }
-            ],
-            "environment" : [
-                {
-                    "name" : "POSTGRES_DB",
-                    "value" : "example"
-                },
-                {
-                    "name" : "POSTGRES_PASSWORD",
-                    "value" : "$sm_databasepsswd_arn:POSTGRES_PASSWORD"
-                }
-            ]
-        }
-    ]')
+    --cpu "512" \
+    --memory "1024" \
+    --tags "$tags" \
+    --container-definitions "`jq -c . database-definition.json`" )
 
 # Check ECS task definition created correctly
 aws ecs list-task-definitions
@@ -268,25 +274,40 @@ aws ecs list-task-definitions
 
 ## Create Task Definition for Backend
 ```shell
+cat <<EOF | tee backend-definition.json
+{
+    "name": "$backend_task_definition",
+    "image": "$backend_image",
+    "portMappings": [
+        {
+            "containerPort": 8080,
+            "hostPort": 8080
+        }
+    ],
+    "environment" : [
+        {
+            "name" : "POSTGRES_HOST",
+            "value" : "10.0.4.247"
+        },
+        {
+            "name" : "POSTGRES_DB",
+            "value" : "example"
+        },
+        {
+            "name" : "POSTGRES_PASSWORD",
+            "value" : "`echo -n $sm_databasepsswd_arn`:POSTGRES_PASSWORD"
+        }
+    ]
+}
+EOF
 ecs_backend_task_definition=$(aws ecs register-task-definition \
     --family $backend_task_definition \
     --network-mode awsvpc \
     --requires-compatibilities EC2 \
     --cpu "256" \
     --memory "512" \
-    --tags $tags \
-    --container-definitions '[
-        {
-            "name": "$backend_task_definition",
-            "image": "$backend_image",
-            "portMappings": [
-                {
-                    "containerPort": 8080,
-                    "hostPort": 8080
-                }
-            ]
-        }
-    ]')
+    --tags "$tags" \
+    --container-definitions "`jq -c . backend-definition.json`" )
 
 # Check ECS task definition created correctly
 aws ecs list-task-definitions
@@ -294,25 +315,32 @@ aws ecs list-task-definitions
 
 ## Create Task Definition for Nginx
 ```shell
+cat <<EOF | tee proxy-definition.json
+{
+    "name": "$proxy_task_definition",
+    "image": "$proxy_image",
+    "portMappings": [
+        {
+            "containerPort": 80,
+            "hostPort": 80
+        }
+    ],
+    "environment" : [
+        {
+            "name" : "BACKEND_SERVER_ADDR",
+            "value" : "10.0.3.31:8080"
+        }
+    ]
+}
+EOF
 ecs_proxy_task_definition=$(aws ecs register-task-definition \
     --family $proxy_task_definition \
     --network-mode awsvpc \
     --requires-compatibilities EC2 \
     --cpu "256" \
     --memory "512" \
-    --tags $tags \
-    --container-definitions '[
-        {
-            "name": "$proxy_task_definition",
-            "image": "$proxy_image",
-            "portMappings": [
-                {
-                    "containerPort": 80,
-                    "hostPort": 80
-                }
-            ]
-        }
-    ]')
+    --tags "$tags" \
+    --container-definitions "`jq -c . proxy-definition.json`" )
 
 # Check ECS task definition created correctly
 aws ecs list-task-definitions
@@ -327,8 +355,8 @@ ecs_task_definition=$(aws ecs describe-task-definition \
     --query "taskDefinition.taskDefinitionArn" \
     --output text)
 aws ecs create-service \
-   --cluster aws-container-deploy \
-   --service-name aws-container-deploy-service \
+   --cluster $cluster_name \
+   --service-name database-service \
    --task-definition $ecs_task_definition \
    --desired-count 1 \
    --network-configuration "awsvpcConfiguration={subnets=[$subnet_public_1],securityGroups=[$security_group_id]}"
@@ -339,8 +367,8 @@ ecs_task_definition=$(aws ecs describe-task-definition \
     --query "taskDefinition.taskDefinitionArn" \
     --output text)
 aws ecs create-service \
-   --cluster aws-container-deploy \
-   --service-name aws-container-deploy-service \
+   --cluster $cluster_name \
+   --service-name backend-service \
    --task-definition $ecs_task_definition \
    --desired-count 1 \
    --network-configuration "awsvpcConfiguration={subnets=[$subnet_public_1],securityGroups=[$security_group_id]}"
@@ -351,8 +379,8 @@ ecs_task_definition=$(aws ecs describe-task-definition \
     --query "taskDefinition.taskDefinitionArn" \
     --output text)
 aws ecs create-service \
-   --cluster aws-container-deploy \
-   --service-name aws-container-deploy-service \
+   --cluster $cluster_name \
+   --service-name proxy-service \
    --task-definition $ecs_task_definition \
    --desired-count 1 \
    --network-configuration "awsvpcConfiguration={subnets=[$subnet_public_1],securityGroups=[$security_group_id]}"
@@ -360,8 +388,9 @@ aws ecs create-service \
 
 
 ```shell
-aws secretsmanager delete-secret --secret-id databaseSecret
+aws secretsmanager delete-secret --secret-id databaseSecret --force-delete-without-recovery
 aws ec2 delete-key-pair --key-name aws-container-deploy-keypair
+# delete EC2
 aws ec2 delete-security-group --group-id $security_group_id
 aws ec2 delete-subnet --subnet-id $subnet_public_1
 aws ec2 delete-subnet --subnet-id $subnet_public_2
@@ -376,5 +405,7 @@ aws ec2 delete-vpc --vpc-id $vpc_id
 
 ## Delete ECS Cluster
 ```shell
-aws ecs delete-cluster --cluster awsContainerDeploy
+# Delete Service
+# Delete Task definition
+aws ecs delete-cluster --cluster $cluster_name
 ```
