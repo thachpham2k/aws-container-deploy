@@ -1,6 +1,49 @@
 **Create EC2 instance to launch Backend app and using RDS for Postgres as Database and ALB instead of Nginx**
 ===
 
+![Architecture](architecture.png)
+
+The system is deployed using AWS CLI and divided into several stages:
+- Setting up environment variables and configuring AWS CLI.
+- Creating Network:
+    - Creating VPC.
+    - Creating Subnet.
+    - Creating Internet Gateway.
+    - Creating Route table and configuring routing.
+- Create RDS
+    - Create subnet group
+    - Create Security group
+    - Create RDS
+- Launching EC2 Instance.
+    - Generating EC2 Key Pair.
+    - Creating Security Group.
+    - Launching EC2 Instance.
+    - Configuring the EC2 Instance and running docker file.
+- Create Load Balancing
+    - Create Security group
+    - Create Application Load Balancer
+    - Create Target Group
+    - Config ALB
+- Verifying Results.
+- Cleaning up the System.
+
+Note:
+- Docker command to run backend container
+```shell
+sudo docker build -t container-image .
+sudo docker run \
+    -dp 8080:8080 \
+    --name backend \
+    --restart always \
+    -e POSTGRES_HOST=$rds_address \
+    -e POSTGRES_DB=example \
+    -e POSTGRES_PASSWORD=$db_password \
+    container-image"
+```
+- Using commandline to connect to RDS
+```shell
+psql -h $rds_address -p 5432 -U postgres
+```
 
 <details>
 <summary>Project init</summary>
@@ -237,16 +280,6 @@ ssh -i $key_name.pem ubuntu@$ec2_public_ip "sudo usermod -aG docker $USER"
 ssh -i $key_name.pem ubuntu@$ec2_public_ip "mkdir ~/src"
 scp -i $key_name.pem -r ../src/backend/* ubuntu@$ec2_public_ip:~/src/
 ssh -i $key_name.pem ubuntu@$ec2_public_ip "cd ~/src && sudo docker build -t container-image . && sudo docker run -dp 8080:8080 --name backend --restart always -e POSTGRES_HOST=$rds_address -e POSTGRES_DB=example -e POSTGRES_PASSWORD=$db_password container-image"
-
-# psql -h (rds_dns_name) -p 5432 -U postgres
-# docker build container-image .
-# docker run -dp 8080:8080\
-#     --name backend \
-#     --restart always \
-#     -e POSTGRES_HOST=database \
-#     -e POSTGRES_DB=example \
-#     -e POSTGRES_PASSWORD=$db_password \
-#     container-image
 ```
 
 </details>
