@@ -24,8 +24,9 @@ cluster_name=aws-container-deploy-cluster
 backend_task_definition=backend-td
 proxy_task_definition=nginx-td
 database_task_definition=database-td
-backend_image=914706199417.dkr.ecr.ap-southeast-1.amazonaws.com/backend-image:latest
-proxy_image=914706199417.dkr.ecr.ap-southeast-1.amazonaws.com/proxy-image:latest
+aws_account_id=$(aws sts get-caller-identity --query 'Account' --output text)
+backend_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/backend-image:latest
+proxy_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/proxy-image:latest
 # network
 vpc_cidr=10.0.0.0/16
 pubsubnet1_cidr=10.0.0.0/20
