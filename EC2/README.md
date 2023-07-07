@@ -1,6 +1,35 @@
-Deploy Docker container to AWS EC2 step by step
+**Deploy Docker container to AWS EC2 step by step**
+===
 
-# Environment init
+![Architecture](architecture.png)
+
+The system is deployed using AWS CLI and divided into several stages:
+- Setting up environment variables and configuring AWS CLI.
+- Creating Network:
+    - Creating VPC.
+    - Creating Subnet.
+    - Creating Internet Gateway.
+    - Creating Route table and configuring routing.
+- Launching EC2 Instance.
+    - Generating EC2 Key Pair.
+    - Creating Security Group.
+    - Launching EC2 Instance.
+    - Configuring the EC2 Instance and running docker-compose.
+- Verifying Results.
+- Cleaning up the System.
+
+Main components of the system are an EC2 instance deployed in a public subnet, which can be accessed directly through port 80. The traffic is then forwarded sequentially through an Nginx container, backend container, and database container.
+
+The application is managed and deployed using Docker-compose, consisting of:
+- Nginx container: work as a proxy server.
+- Backend container: serves as the application server to handle user requests.
+- Database container: using Postgres Database.
+
+For more details on the docker-compose file, please refer to this [link](../docker-compose/README.md)
+
+<details>
+<summary>Environment init</summary>
+
 ```shell
 sudo apt update -y
 sudo apt install jq awscli tee -y
@@ -26,7 +55,9 @@ vpc_cidr=10.0.0.0/16
 pubsubnet_cidr=10.0.0.0/20
 ```
 
-# Create Network
+</details>
+<details>
+<summary>Create Network</summary>
 
 ## Create VPC
 ```shell
@@ -83,7 +114,9 @@ aws ec2 associate-route-table \
     --route-table-id $route_table_id
 ```
 
-# Create EC2
+</details>
+<details>
+<summary>Create EC2</summary>
 
 ## Create Keypair
 ```shell
@@ -180,7 +213,9 @@ scp -i $key_name.pem -r ../src/* ubuntu@$ec2_public_ip:~/src/
 ssh -i $key_name.pem ubuntu@$ec2_public_ip "cd ~/docker-compose && sudo docker-compose up -d"
 ```
 
-# Access to api using IP, EC2 DNS
+</details>
+<details>
+<summary>Access to api using IP, EC2 DNS</summary>
 
 ## Public IP of EC2
 ```shell
@@ -199,7 +234,10 @@ aws ec2 describe-instances \
 
 ![Using public DNS to access web](access-using-public-dns.png)
 
-# Clean
+</details>
+<details>
+<summary>Clean</summary>
+
 ```shell
 aws ec2 terminate-instances --instance-ids $ec2_instance_id
 aws ec2 delete-key-pair --key-name $key_name
@@ -211,3 +249,5 @@ aws ec2 delete-internet-gateway --internet-gateway-id $gateway_id
 aws ec2 delete-vpc --vpc-id $vpc_id
 rm -f $key_name.pem
 ```
+
+</details>
