@@ -49,7 +49,7 @@ db_password=db-abc-123
 vpc_id=$(aws ec2 create-vpc \
     --cidr-block $vpc_cidr \
     --region $region \
-    --tag-specifications `echo "ResourceType=vpc,$tagspec"` \
+    --tag-specifications `echo 'ResourceType=vpc,Tags=[{Key=Name,Value=Deploy2EC2-vpc},'$tagspec` \
     --output text \
     --query 'Vpc.VpcId')
 
@@ -61,31 +61,31 @@ aws ec2 modify-vpc-attribute \
 subnet_public_1=$(aws ec2 create-subnet \
     --availability-zone $az_01 \
     --cidr-block $pubsubnet1_cidr \
-    --tag-specifications `echo "ResourceType=subnet,$tagspec"` \
+    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value=Deploy2EC2-publicsubnet-'$az_01'},'$tagspec` \
     --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
 
 subnet_public_2=$(aws ec2 create-subnet \
     --availability-zone $az_02 \
     --cidr-block $pubsubnet2_cidr \
-    --tag-specifications `echo "ResourceType=subnet,$tagspec"` \
+    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value=Deploy2EC2-publicsubnet-'$az_02'},'$tagspec` \
     --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
 
 subnet_private_1=$(aws ec2 create-subnet \
     --availability-zone $az_01 \
     --cidr-block $prisubnet1_cidr \
-    --tag-specifications `echo "ResourceType=subnet,$tagspec"` \
+    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value=Deploy2EC2-privatesubnet-'$az_01'},'$tagspec` \
     --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
 
 subnet_private_2=$(aws ec2 create-subnet \
     --availability-zone $az_02 \
     --cidr-block $prisubnet2_cidr \
-    --tag-specifications `echo "ResourceType=subnet,$tagspec"` \
+    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value=Deploy2EC2-privatesubnet-'$az_02'},'$tagspec` \
     --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
 
 # Create Internet Gateway
 gateway_id=$(aws ec2 create-internet-gateway \
     --region $region \
-    --tag-specifications `echo "ResourceType=internet-gateway,$tagspec"` \
+    --tag-specifications `echo 'ResourceType=internet-gateway,Tags=[{Key=Name,Value=Deploy2EC2-igw},'$tagspec` \
     --output text \
     --query 'InternetGateway.InternetGatewayId')
 
@@ -94,7 +94,7 @@ aws ec2 attach-internet-gateway \
     --internet-gateway-id $gateway_id
 
 public_route_table_id=$(aws ec2 create-route-table \
-    --tag-specifications `echo "ResourceType=route-table,$tagspec"` \
+    --tag-specifications `echo 'ResourceType=route-table,Tags=[{Key=Name,Value=Deploy2EC2-rtb},'$tagspec` \
     --vpc-id $vpc_id | jq -r '.RouteTable.RouteTableId')
 
 aws ec2 create-route \
@@ -124,7 +124,7 @@ aws rds create-db-subnet-group \
     --db-subnet-group-name $subnet_group_name \
     --db-subnet-group-description "Subnet Group for Postgres RDS" \
     --subnet-ids $subnet_private_1 $subnet_private_2 \
-    --tags $tags
+    --tags "$tags2"
 # Create Security Group
 rds_sgr_id=$(aws ec2 create-security-group \
     --group-name `echo $project`-rds-sgr \
@@ -135,46 +135,32 @@ aws ec2 authorize-security-group-ingress \
     --group-id $rds_sgr_id \
     --protocol tcp \
     --port 5432 \
-    --source-cidr 0.0.0.0/0
+    --cidr 0.0.0.0/0
 
 db_name=$(echo $project'-rds')
 aws rds create-db-instance \
     --db-instance-identifier $db_name \
     --engine postgres \
+    --db-name example \
     --db-instance-class db.t3.micro \
     --allocated-storage 20 \
     --master-username postgres \
     --master-user-password $db_password \
     --storage-type gp2 \
-    --no-enable-performance-insights \ 
-	--availability-zone az_01 \ 
-	--db-subnet-group-name $subnet_group_name \ 
-	--vpc-security-group-ids $rds_sgr_id \ 
-	--backup-retention-period 0 \
-    --tags $tags
+    --no-enable-performance-insights \
+    --availability-zone $az_01 \
+    --db-subnet-group-name $subnet_group_name \
+    --vpc-security-group-ids $rds_sgr_id \
+    --backup-retention-period 0 \
+    --tags "$tags2"
 
 aws rds wait db-instance-available \
     --db-instance-identifier $db_name
 
-aws rds describe-db-instances \
-    --db-instance-identifier $db_name
-
-# get rds endpoint
-cat <<EOF
-{
-    "DBInstances": [
-        {
-            "DBInstanceIdentifier": "my-rds-instance",
-            ...
-            "Endpoint": {
-                "Address": "<RDS_ENDPOINT>",
-                ...
-            },
-            ...
-        }
-    ]
-}
-EOF
+rds_address=$(aws rds describe-db-instances \
+    --db-instance-identifier $db_name \
+    --query 'DBInstances[0].Endpoint.Address' \
+    --output text)
 ```
 
 </details>
@@ -219,14 +205,14 @@ aws ec2 authorize-security-group-ingress \
 ```shell
 ec2_ami=$(aws ec2 describe-images \
     --owners amazon \
-    --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-focal-20*" "Name=state,Values=available" \
+    --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22*amd64*" "Name=state,Values=available" \
     --query 'Images[*].[ImageId]' --output text | head -n 1)
 
 ec2_instance_id=$(aws ec2 run-instances \
     --image-id $ec2_ami \
     --count 1 \
     --instance-type t3.medium \
-    --subnet-id $subnet_id \
+    --subnet-id $subnet_public_1 \
     --key-name $key_name \
     --security-group-ids $security_group_id \
     --associate-public-ip-address \
@@ -241,7 +227,7 @@ ec2_public_ip=$(aws ec2 describe-instances \
     --output text)
 chmod 400 $key_name.pem
 ssh -i $key_name.pem ubuntu@$ec2_public_ip "sudo apt update -y"
-ssh -i $key_name.pem ubuntu@$ec2_public_ip "sudo apt install -y docker"
+ssh -i $key_name.pem ubuntu@$ec2_public_ip "sudo apt install -y docker docker.io"
 ssh -i $key_name.pem ubuntu@$ec2_public_ip "sudo groupadd docker"
 ssh -i $key_name.pem ubuntu@$ec2_public_ip "sudo usermod -aG docker $USER"
 ```
@@ -250,7 +236,17 @@ ssh -i $key_name.pem ubuntu@$ec2_public_ip "sudo usermod -aG docker $USER"
 ```shell
 ssh -i $key_name.pem ubuntu@$ec2_public_ip "mkdir ~/src"
 scp -i $key_name.pem -r ../src/backend/* ubuntu@$ec2_public_ip:~/src/
-ssh -i $key_name.pem ubuntu@$ec2_public_ip "cd ~/src && sudo docker run......"
+ssh -i $key_name.pem ubuntu@$ec2_public_ip "cd ~/src && sudo docker build -t container-image . && sudo docker run -dp 8080:8080 --name backend --restart always -e POSTGRES_HOST=$rds_address -e POSTGRES_DB=example -e POSTGRES_PASSWORD=$db_password container-image"
+
+# psql -h (rds_dns_name) -p 5432 -U postgres
+# docker build container-image .
+# docker run -dp 8080:8080\
+#     --name backend \
+#     --restart always \
+#     -e POSTGRES_HOST=database \
+#     -e POSTGRES_DB=example \
+#     -e POSTGRES_PASSWORD=$db_password \
+#     container-image
 ```
 
 </details>
@@ -261,24 +257,59 @@ ssh -i $key_name.pem ubuntu@$ec2_public_ip "cd ~/src && sudo docker run......"
 <summary></summary>
 
 ```shell
-https://docs.aws.amazon.com/elasticloadbalancing/latest/application/tutorial-application-load-balancer-cli.html
 # Create security group
+alb_sgr_id=$(aws ec2 create-security-group \
+    --group-name `echo $project'-alb-sgr'` \
+    --description "Security group for ALB" \
+    --tag-specifications `echo 'ResourceType=security-group,Tags=['$tagspec` \
+    --vpc-id $vpc_id | jq -r '.GroupId')
 
+aws ec2 authorize-security-group-ingress \
+   --group-id $alb_sgr_id \
+   --protocol tcp \
+   --port 22 \
+   --cidr 0.0.0.0/0
+
+aws ec2 authorize-security-group-ingress \
+   --group-id $alb_sgr_id \
+   --protocol tcp \
+   --port 80 \
+   --cidr 0.0.0.0/0
 # Create ALB
-aws elbv2 create-load-balancer --name my-load-balancer  \
-    --subnets $subnet_public_1 $subnet_public_2_ --security-groups $sgr
+alb_name=$(echo $project-alb)
+alb_arn=$(aws elbv2 create-load-balancer \
+    --name $alb_name  \
+    --subnets $subnet_public_1 $subnet_public_2 \
+    --security-groups $alb_sgr_id \
+    --tags "$tags2" \
+    --query 'LoadBalancers[0].LoadBalancerArn' \
+    --output text)
+echo $alb_arn
 
-aws elbv2 create-target-group --name my-targets --protocol HTTP --port 80 \
-    --vpc-id vpc-0598c7d356EXAMPLE --ip-address-type [ipv4 or ipv6]
+alb_tgr_name=$(echo $project-tgr)
+alb_tgr_arn=$(aws elbv2 create-target-group \
+    --name $alb_tgr_name \
+    --protocol HTTP \
+    --port 8080 \
+    --vpc-id $vpc_id \
+    --tags "$tags2" \
+    --query 'TargetGroups[0].TargetGroupArn' \
+    --output text)
+echo $alb_tgr_arn
 
-aws elbv2 register-targets --target-group-arn targetgroup-arn  \
-    --targets Id=i-0abcdef1234567890 Id=i-1234567890abcdef0
+aws elbv2 register-targets \
+    --target-group-arn $alb_tgr_arn  \
+    --targets Id=$ec2_instance_id
 
-aws elbv2 create-listener --load-balancer-arn loadbalancer-arn \
-    --protocol HTTP --port 80  \
-    --default-actions Type=forward,TargetGroupArn=targetgroup-arn
+alb_listener_arn=$(aws elbv2 create-listener \
+  --load-balancer-arn $alb_arn \
+  --protocol HTTP \
+  --port 80 \
+  --default-actions Type=forward,TargetGroupArn=$alb_tgr_arn \
+  --query 'Listeners[0].ListenerArn' \
+  --output text)
 
-aws elbv2 describe-target-health --target-group-arn targetgroup-arn
+aws elbv2 describe-target-health --target-group-arn $alb_tgr_arn
 ```
 
 </details>
@@ -289,8 +320,13 @@ aws elbv2 describe-target-health --target-group-arn targetgroup-arn
 <summary></summary>
 
 ```shell
-
+aws elbv2 describe-load-balancers \
+    --load-balancer-arns $alb_arn \
+    --query 'LoadBalancers[0].DNSName' \
+    --output text
 ```
+
+![Success](access-website-with-alb-dns-success.png)
 
 </details>
 
@@ -300,8 +336,25 @@ aws elbv2 describe-target-health --target-group-arn targetgroup-arn
 <summary></summary>
 
 ```shell
-aws elbv2 delete-load-balancer --load-balancer-arn loadbalancer-arn
-aws elbv2 delete-target-group --target-group-arn targetgroup-arn
+aws elbv2 delete-listener --listener-arn $alb_listener_arn
+aws elbv2 delete-target-group --target-group-arn $alb_tgr_arn
+aws elbv2 delete-load-balancer --load-balancer-arn $alb_arn
+aws ec2 delete-security-group --group-id $alb_sgr_id
+aws ec2 terminate-instances --instance-ids $ec2_instance_id
+aws ec2 delete-key-pair --key-name $key_name
+rm -f $key_name
+aws rds delete-db-instance --db-instance-identifier $db_name --skip-final-snapshot
+aws ec2 delete-security-group --group-id $rds_sgr_id
+aws rds delete-db-subnet-group --db-subnet-group-name $subnet_group_name
+aws ec2 delete-security-group --group-id $security_group_id
+aws ec2 delete-subnet --subnet-id $subnet_public_1
+aws ec2 delete-subnet --subnet-id $subnet_public_2
+aws ec2 delete-subnet --subnet-id $subnet_private_1
+aws ec2 delete-subnet --subnet-id $subnet_private_2
+aws ec2 delete-route-table --route-table-id $public_route_table_id
+aws ec2 detach-internet-gateway --internet-gateway-id $gateway_id --vpc-id $vpc_id
+aws ec2 delete-internet-gateway --internet-gateway-id $gateway_id
+aws ec2 delete-vpc --vpc-id $vpc_id
 ```
 
 </details>
