@@ -251,10 +251,8 @@ ssh -i $key_name.pem ubuntu@$ec2_public_ip "cd ~/src && sudo docker build -t con
 
 </details>
 
-# Create ALB
-
 <details>
-<summary></summary>
+<summary>Create ALB</summary>
 
 ```shell
 # Create security group
@@ -314,10 +312,8 @@ aws elbv2 describe-target-health --target-group-arn $alb_tgr_arn
 
 </details>
 
-# Check correct
-
 <details>
-<summary></summary>
+<summary>Check correct</summary>
 
 ```shell
 aws elbv2 describe-load-balancers \
@@ -330,10 +326,8 @@ aws elbv2 describe-load-balancers \
 
 </details>
 
-# Clean
-
 <details>
-<summary></summary>
+<summary>Clean</summary>
 
 ```shell
 aws elbv2 delete-listener --listener-arn $alb_listener_arn
