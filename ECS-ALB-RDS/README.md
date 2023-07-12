@@ -37,6 +37,7 @@ project2=Deploy2ECS
 region=ap-southeast-1
 az_01=ap-southeast-1a
 az_02=ap-southeast-1b
+az_03=ap-southeast-1c
 # tags
 tags='[{"key":"purpose", "value":"test"}, {"key":"project", "value":"aws-container-deploy"}, {"key":"author", "value":"pthach"}]'
 tags2='[{"Key":"purpose", "Value":"test"}, {"Key":"project", "Value":"aws-container-deploy"}, {"Key":"author", "Value":"pthach"}]'
@@ -71,11 +72,11 @@ vpc_id=$(aws ec2 create-vpc \
     --output text \
     --query 'Vpc.VpcId')
 
-echo $vpc_id
-
 aws ec2 modify-vpc-attribute \
     --vpc-id $vpc_id \
     --enable-dns-hostnames '{"Value": true}'
+
+echo $vpc_id
 ```
 </details>
 
@@ -86,8 +87,10 @@ aws ec2 modify-vpc-attribute \
 ```shell
 pubsubnet1_name=$project2-pubsubnet-$az_01
 pubsubnet2_name=$project2-pubsubnet-$az_02
+pubsubnet3_name=$project2-pubsubnet-$az_03
 prisubnet1_name=$project2-prisubnet-$az_01
 prisubnet2_name=$project2-prisubnet-$az_02
+prisubnet3_name=$project2-prisubnet-$az_03
 # Create subnet
 subnet_public_1=$(aws ec2 create-subnet \
     --availability-zone $az_01 \
@@ -99,6 +102,12 @@ subnet_public_2=$(aws ec2 create-subnet \
     --availability-zone $az_02 \
     --cidr-block $pubsubnet2_cidr \
     --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$pubsubnet2_name'},'$tagspec` \
+    --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
+
+subnet_public_3=$(aws ec2 create-subnet \
+    --availability-zone $az_03 \
+    --cidr-block $pubsubnet3_cidr \
+    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$pubsubnet3_name'},'$tagspec` \
     --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
 
 subnet_private_1=$(aws ec2 create-subnet \
@@ -113,10 +122,18 @@ subnet_private_2=$(aws ec2 create-subnet \
     --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$prisubnet2_name'},'$tagspec` \
     --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
 
+subnet_private_3=$(aws ec2 create-subnet \
+    --availability-zone $az_03 \
+    --cidr-block $prisubnet3_cidr \
+    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$prisubnet3_name'},'$tagspec` \
+    --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
+
 echo $subnet_public_1
 echo $subnet_public_2
+echo $subnet_public_3
 echo $subnet_private_1
 echo $subnet_private_2
+echo $subnet_private_3
 ```
 </details>
 
@@ -133,11 +150,11 @@ gateway_id=$(aws ec2 create-internet-gateway \
     --output text \
     --query 'InternetGateway.InternetGatewayId')
 
-echo $gateway_id
-
 aws ec2 attach-internet-gateway \
     --vpc-id $vpc_id \
     --internet-gateway-id $gateway_id
+
+echo $gateway_id
 ```
 </details>
 
@@ -152,8 +169,6 @@ rtb_public_id=$(aws ec2 create-route-table \
     --tag-specifications `echo 'ResourceType=route-table,Tags=[{Key=Name,Value='$rtb_name'},'$tagspec` \
     --vpc-id $vpc_id | jq -r '.RouteTable.RouteTableId')
 
-echo $rtb_public_id
-
 aws ec2 create-route \
     --route-table-id $rtb_public_id \
     --destination-cidr-block 0.0.0.0/0 \
@@ -167,6 +182,27 @@ aws ec2 associate-route-table \
 aws ec2 associate-route-table \
     --subnet-id $subnet_public_2 \
     --route-table-id $rtb_public_id
+
+aws ec2 associate-route-table \
+    --subnet-id $subnet_public_3 \
+    --route-table-id $rtb_public_id
+
+echo $rtb_public_id
+```
+</details>
+
+<details>
+<summary>Endpoint</summary>
+
+```shell
+com.amazonaws.$region.s3
+com.amazonaws.$region.ecr.dkr
+com.amazonaws.$region.ecr.api
+com.amazonaws.$region.ecs
+com.amazonaws.$region.ecs-agent
+com.amazonaws.$region.ecs-telemetry
+com.amazonaws.$region.ssm
+com.amazonaws.$region.secretsmanager
 ```
 </details>
 
@@ -203,13 +239,13 @@ rds_sgr_id=$(aws ec2 create-security-group \
     --tag-specifications `echo 'ResourceType=security-group,Tags=['$tagspec` \
     --vpc-id $vpc_id | jq -r '.GroupId')
 
-echo $rds_sgr_id
-
 aws ec2 authorize-security-group-ingress \
     --group-id $rds_sgr_id \
     --protocol tcp \
     --port 5432 \
     --cidr 0.0.0.0/0
+
+echo $rds_sgr_id
 ```
 </details>
 
@@ -255,7 +291,6 @@ rds_address=$(aws rds describe-db-instances \
     --db-instance-identifier $rds_name \
     --query 'DBInstances[0].Endpoint.Address' \
     --output text)
-
 echo $rds_address
 
 secret_name=$project2-sm
@@ -294,6 +329,8 @@ aws ecs list-clusters
 ## Prepare to create EC2
 ```shell
 ecs_ec2_key_name=$(echo $project2-keypair)
+ecs_ec2_sgr_name=$(echo $project2-ecs-sgr)
+ecs_ec2_role_name=$(echo $project2-ecs-ec2-role)
 # Create Keypair
 aws ec2 create-key-pair \
     --key-name $ecs_ec2_key_name \
@@ -302,15 +339,12 @@ aws ec2 create-key-pair \
     --query 'KeyMaterial' \
     --output text > ./$ecs_ec2_key_name.pem
 
-ecs_ec2_sgr_name=$(echo $project2-ecs-sgr)
 # Create Security Group
 ecs_ec2_sgr_id=$(aws ec2 create-security-group \
     --group-name $ecs_ec2_sgr_name \
     --description "Security group for EC2 in ECS" \
     --tag-specifications `echo 'ResourceType=security-group,Tags=['$tagspec` \
     --vpc-id $vpc_id | jq -r '.GroupId')
-
-echo $ecs_ec2_sgr_id
 
 aws ec2 authorize-security-group-ingress \
    --group-id $ecs_ec2_sgr_id \
@@ -324,7 +358,8 @@ aws ec2 authorize-security-group-ingress \
    --port 22 \
    --cidr 0.0.0.0/0
 
-ecs_ec2_role_name=$(echo $project2-ecs-ec2-role)
+echo $ecs_ec2_sgr_id
+
 # Create EC2 Role
 aws iam create-role \
     --role-name $ecs_ec2_role_name \
@@ -378,6 +413,7 @@ echo $ecs_ec2_ami_id
 ## Create auto scaling group
 ```shell
 ecs_ec2_template_name=$project2-ecs-ec2-template
+ecs_ec2_autoscale_name=$project2-ecs-ec2-autoscale
 ecs_ec2_instancetype=t3.medium
 ecs_ec2_subnet_id=$subnet_public_1
 ecs_ec2_userdata=$(cat <<EOF | openssl base64 -A
@@ -417,7 +453,6 @@ aws ec2 create-launch-template \
     --launch-template-name $ecs_ec2_template_name \
     --launch-template-data file://ecs-ec2-launch-template.json
 
-ecs_ec2_autoscale_name=$project2-ecs-ec2-autoscale
 # create Autoscaling group
 aws autoscaling create-auto-scaling-group \
     --auto-scaling-group-name $ecs_ec2_autoscale_name \
@@ -453,11 +488,11 @@ ecs_ec2_id=$(aws ec2 run-instances \
     --user-data  file://ecs-ec2-userdata.txt \
     --tag-specifications `echo "ResourceType=instance,Tags=["$tagspec` | jq -r '.Instances[0].InstanceId')
 
-echo $ecs_ec2_id
-
 aws ec2 associate-iam-instance-profile \
     --instance-id $ecs_ec2_id \
     --iam-instance-profile Name=$ecs_ec2_role_name
+
+echo $ecs_ec2_id   
 ```
 </details>
 
@@ -472,6 +507,9 @@ secret_arn=$(aws secretsmanager describe-secret --secret-id $secret_name --query
 echo $secret_arn
 # Create Task Definition role
 ecs_task_role_name=$(echo $project2-ecs-task-role)
+ecs_task_policy_name=ecs_task_policy
+ecs_task_backend_name=$project2-backend-task
+ecs_task_backend_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/backend-container:latest
 # Create EC2 Role
 ecs_task_role_arn=$(aws iam create-role \
     --role-name $ecs_task_role_name \
@@ -510,7 +548,7 @@ EOF
 
 aws iam put-role-policy \
     --role-name $ecs_task_role_name \
-    --policy-name ecs_task_policy \
+    --policy-name $ecs_task_policy_name \
     --policy-document file://ecs-task-role.json
 
 aws iam attach-role-policy \
@@ -522,8 +560,6 @@ ecs_task_role_arn=$(aws iam get-role \
     --output text \
     --query 'Role.Arn')
 
-ecs_task_backend_name=$project2-backend-task
-ecs_task_backend_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/backend-container:latest
 # Content of task-definition
 cat <<EOF | tee backend-definition.json
 {
@@ -572,6 +608,7 @@ aws ecs list-task-definitions
 
 ## Create Service
 ```shell
+ecs_service_name=backend-service
 # Backend
 ecs_task_arn=$(aws ecs describe-task-definition \
     --task-definition $ecs_task_backend_name \
@@ -582,7 +619,7 @@ echo $ecs_task_arn
 
 aws ecs create-service \
    --cluster $ecs_cluster_name \
-   --service-name backend2-service \
+   --service-name $ecs_service_name \
    --task-definition $ecs_task_arn \
    --desired-count 1 \
    --network-configuration "awsvpcConfiguration={subnets=[$subnet_public_1],securityGroups=[$ecs_ec2_sgr_id]}"
@@ -615,6 +652,8 @@ aws ec2 authorize-security-group-ingress \
    --protocol tcp \
    --port 80 \
    --cidr 0.0.0.0/0
+
+echo $alb_sgr_id
 ```
 </details>
 
@@ -624,6 +663,7 @@ aws ec2 authorize-security-group-ingress \
 ## Create ALB
 ```shell
 alb_name=$project2-alb
+alb_tgr_name=$(echo $project2-tgr)
 alb_vpc_id=$vpc_id
 alb_subnet1_id=$subnet_public_1
 alb_subnet2_id=$subnet_public_2
@@ -635,9 +675,7 @@ alb_arn=$(aws elbv2 create-load-balancer \
     --tags "$tags2" \
     --query 'LoadBalancers[0].LoadBalancerArn' \
     --output text)
-echo $alb_arn
 
-alb_tgr_name=$(echo $project2-tgr)
 alb_tgr_arn=$(aws elbv2 create-target-group \
     --name $alb_tgr_name \
     --protocol HTTP \
@@ -647,7 +685,7 @@ alb_tgr_arn=$(aws elbv2 create-target-group \
     --tags "$tags2" \
     --query 'TargetGroups[0].TargetGroupArn' \
     --output text)
-echo $alb_tgr_arn
+
 
 # aws elbv2 register-targets \
 #     --target-group-arn $alb_tgr_arn  \
@@ -662,6 +700,10 @@ alb_listener_arn=$(aws elbv2 create-listener \
   --output text)
 
 aws elbv2 describe-target-health --target-group-arn $alb_tgr_arn
+
+echo $alb_arn
+echo $alb_tgr_arn
+echo $alb_listener_arn
 ```
 </details>
 
@@ -674,7 +716,7 @@ aws elbv2 describe-target-health --target-group-arn $alb_tgr_arn
 #     --target-group-arn $alb_tgr_arn \
 #     --attributes '[{"Key":"target-type","Value":"ip"}'
 aws ecs update-service --cluster $ecs_cluster_name \
-    --service backend2-service \
+    --service $ecs_service_name \
     --desired-count 1 \
     --load-balancers targetGroupArn=$alb_tgr_arn,containerName=`echo $ecs_backend_task_definition | jq -r '.taskDefinition.containerDefinitions[0].name'`,containerPort=8080
 ```
@@ -697,32 +739,132 @@ aws elbv2 describe-load-balancers \
 # Clean
 
 <details>
-<summary>Clean</summary>
+<summary>ALB</summary>
 
+## ALB
 ```shell
+# ALB
 aws elbv2 delete-listener --listener-arn $alb_listener_arn
 aws elbv2 delete-target-group --target-group-arn $alb_tgr_arn
 aws elbv2 delete-load-balancer --load-balancer-arn $alb_arn
 aws ec2 delete-security-group --group-id $alb_sgr_id
-# aws ec2 terminate-instances --instance-ids $ecs_ec2_id
+```
+</details>
+<details>
+<summary>ECS EC2</summary>
+
+## ECS EC2
+```shell
+# ECS EC2
+aws ec2 terminate-instances --instance-ids $ecs_ec2_id
+aws ec2 wait  instance-terminated --instance-ids $ecs_ec2_id
+# AutoScaling Group & Lanch Template
+aws autoscaling delete-auto-scaling-group \
+    --auto-scaling-group-name $ecs_ec2_autoscale_name \
+    --force-delete
+aws ec2 delete-launch-template --launch-template-name $ecs_ec2_template_name
+
+aws iam remove-role-from-instance-profile \
+    --instance-profile-name $ecs_ec2_role_name \
+    --role-name $ecs_ec2_role_name
+aws iam delete-instance-profile --instance-profile-name $ecs_ec2_role_name
+aws iam detach-role-policy \
+    --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role \
+    --role-name $ecs_ec2_role_name
+aws iam detach-role-policy \
+    --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore \
+    --role-name $ecs_ec2_role_name
+aws iam delete-role --role-name $ecs_ec2_role_name
+aws ec2 delete-security-group --group-id $ecs_ec2_sgr_id
 aws ec2 delete-key-pair --key-name $ecs_ec2_key_name
 rm -f $ecs_ec2_key_name.pem
+```
+</details>
+<details>
+<summary>RDS</summary>
+
+## RDS
+```shell
+# RDS
 aws rds delete-db-instance --db-instance-identifier $rds_name --skip-final-snapshot
 aws rds wait db-instance-deleted --db-instance-identifier $rds_name
 aws ec2 delete-security-group --group-id $rds_sgr_id
 aws rds delete-db-subnet-group --db-subnet-group-name $rds_subnet_group_name
-aws ec2 delete-security-group --group-id $ecs_ec2_sgr_id
+```
+</details>
+<details>
+<summary>ECS</summary>
+
+## ECS
+```shell
+# ECS
+aws ecs delete-service --cluster $ecs_cluster_name \
+    --service $ecs_service_name --force
+aws ecs delete-cluster --cluster $ecs_cluster_name
+
+aws iam delete-role-policy \
+    --role-name $ecs_task_role_name \
+    --policy-name $ecs_task_policy_name
+aws iam detach-role-policy \
+    --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly \
+    --role-name $ecs_task_role_name
+aws iam delete-role --role-name $ecs_task_role_name
+
+# aws ecs deregister-task-definition --task-definition `echo $ecs_backend_task_definition | jq -r ".taskDefinition.taskDefinitionArn"`
+
+# task_definition_arns=$(aws ecs list-task-definitions --status ACTIVE --query 'taskDefinitionArns[]' --output text)
+
+# # Loop through each ARN and deregister the task definition
+# for arn in $task_definition_arns; do
+#     aws ecs deregister-task-definition --task-definition $arn
+# done
+```
+</details>
+<details>
+<summary>Secret Manager</summary>
+
+## Secret Manager
+```shell
+# Secret Manager
+aws secretsmanager delete-secret \
+    --secret-id $secret_name \
+    --force-delete-without-recovery
+```
+</details>
+<details>
+<summary>Network</summary>
+
+## Network
+```shell
+# Network
 aws ec2 delete-subnet --subnet-id $subnet_public_1
 aws ec2 delete-subnet --subnet-id $subnet_public_2
+aws ec2 delete-subnet --subnet-id $subnet_public_3
 aws ec2 delete-subnet --subnet-id $subnet_private_1
 aws ec2 delete-subnet --subnet-id $subnet_private_2
+aws ec2 delete-subnet --subnet-id $subnet_private_3
 aws ec2 delete-route-table --route-table-id $rtb_public_id
-aws ec2 detach-internet-gateway --internet-gateway-id $gateway_id --vpc-id $vpc_id
+aws ec2 detach-internet-gateway \
+    --internet-gateway-id $gateway_id \
+    --vpc-id $vpc_id
 aws ec2 delete-internet-gateway --internet-gateway-id $gateway_id
 aws ec2 delete-vpc --vpc-id $vpc_id
+```
+</details>
+<details>
+<summary>ECR</summary>
 
-aws secretsmanager delete-secret \
-    --secret-id aws-container-deploy-2-ecs-sm \
-    --force-delete-without-recovery
+## ECR
+```shell
+ecr_name=backend-container
+aws ecr batch-delete-image \
+    --repository-name $ecr_name \
+    --image-ids imageTag=latest \
+    --region $region
+
+aws ecr delete-repository \
+    --repository-name $ecr_name \
+    --force \
+    --region $region
 ```
 </details>
