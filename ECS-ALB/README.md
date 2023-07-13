@@ -1,8 +1,9 @@
 **Deploy Container into ECS and using ALB to redirect connection, Database is install in ECS**
 ===
 
-# Project init
+This project is in progress
 
+# Project init
 
 <details>
 <summary>AWS config</summary>
@@ -36,9 +37,9 @@ aws_account_id=$(aws sts get-caller-identity --query 'Account' --output text)
 project=aws-container-deploy-2-ecs
 project2=Deploy2ECS
 # global architect
-region=ap-southeast-1
-az_01=ap-southeast-1a
-az_02=ap-southeast-1b
+region=$(aws --profile default configure get region)
+az_01=`echo -n $region`a
+az_02=`echo -n $region`b
 # tags
 tags='[{"key":"purpose", "value":"test"}, {"key":"project", "value":"aws-container-deploy"}, {"key":"author", "value":"pthach"}]'
 tags2='[{"Key":"purpose", "Value":"test"}, {"Key":"project", "Value":"aws-container-deploy"}, {"Key":"author", "Value":"pthach"}]'
@@ -51,20 +52,24 @@ prisubnet1_cidr=10.0.128.0/20
 prisubnet2_cidr=10.0.144.0/20
 # SecretManager
 database_psswd=db-1357
+# ECR
+ecr_image_backend_name=backend-image
+ecr_image_proxy_name=proxy-image
 # ECS
 ecs_cluster_name=$project2-cluster
 ecs_task_backend_name=backend-td
 ecs_task_proxy_name=nginx-td
 ecs_task_database_name=database-td
-ecs_task_backend_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/backend-image:latest
-ecs_task_proxy_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/proxy-image:latest
+ecs_task_backend_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/$ecr_image_backend_name:latest
+ecs_task_proxy_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/$ecr_image_proxy_name:latest
 ecs_task_role_name=$project2-ecs-task-role
-ecs_task_policy_name=$project2_task_policy
+ecs_task_policy_name=$project2-ecs-task-policy
 # security and other
 role_name=aws-container-deploy-role
 key_name=aws-container-deploy-keypair
 sgr_name=aws-container-deploy-sgr
 ```
+</details>
 
 # Create Network
 
@@ -97,10 +102,8 @@ echo $vpc_id
 ```shell
 pubsubnet1_name=$project2-pubsubnet-$az_01
 pubsubnet2_name=$project2-pubsubnet-$az_02
-pubsubnet3_name=$project2-pubsubnet-$az_03
 prisubnet1_name=$project2-prisubnet-$az_01
 prisubnet2_name=$project2-prisubnet-$az_02
-prisubnet3_name=$project2-prisubnet-$az_03
 # Create subnet
 subnet_public_1=$(aws ec2 create-subnet \
     --availability-zone $az_01 \
@@ -112,12 +115,6 @@ subnet_public_2=$(aws ec2 create-subnet \
     --availability-zone $az_02 \
     --cidr-block $pubsubnet2_cidr \
     --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$pubsubnet2_name'},'$tagspec` \
-    --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
-
-subnet_public_3=$(aws ec2 create-subnet \
-    --availability-zone $az_03 \
-    --cidr-block $pubsubnet3_cidr \
-    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$pubsubnet3_name'},'$tagspec` \
     --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
 
 subnet_private_1=$(aws ec2 create-subnet \
@@ -132,18 +129,10 @@ subnet_private_2=$(aws ec2 create-subnet \
     --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$prisubnet2_name'},'$tagspec` \
     --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
 
-subnet_private_3=$(aws ec2 create-subnet \
-    --availability-zone $az_03 \
-    --cidr-block $prisubnet3_cidr \
-    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$prisubnet3_name'},'$tagspec` \
-    --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
-
 echo $subnet_public_1
 echo $subnet_public_2
-echo $subnet_public_3
 echo $subnet_private_1
 echo $subnet_private_2
-echo $subnet_private_3
 ```
 </details>
 
@@ -191,10 +180,6 @@ aws ec2 associate-route-table \
 
 aws ec2 associate-route-table \
     --subnet-id $subnet_public_2 \
-    --route-table-id $rtb_public_id
-
-aws ec2 associate-route-table \
-    --subnet-id $subnet_public_3 \
     --route-table-id $rtb_public_id
 
 echo $rtb_public_id
@@ -374,6 +359,8 @@ ecs_ec2_id=$(aws ec2 run-instances \
     --user-data  file://ecs-ec2-userdata.txt \
     --tag-specifications `echo "ResourceType=instance,Tags=["$tagspec` | jq -r '.Instances[0].InstanceId')
 
+# aws ec2 wait 
+
 aws ec2 associate-iam-instance-profile \
     --instance-id $ecs_ec2_id \
     --iam-instance-profile Name=$ecs_ec2_role_name
@@ -479,11 +466,12 @@ cat <<EOF | tee database-definition.json
 EOF
 
 ecs_database_task_definition=$(aws ecs register-task-definition \
-    --family $database_task_definition \
+    --family $ecs_task_database_name \
     --network-mode awsvpc \
     --requires-compatibilities EC2 \
-    --cpu "512" \
-    --memory "1024" \
+    --cpu "256" \
+    --memory "512" \
+    --execution-role-arn "$ecs_task_role_arn" \
     --tags "$tags" \
     --container-definitions "`jq -c . database-definition.json`" )
 
@@ -498,14 +486,16 @@ aws ecs list-task-definitions
 ```shell
 # Database
 ecs_task_definition=$(aws ecs describe-task-definition \
-    --task-definition $database_task_definition \
+    --task-definition $ecs_task_database_name \
     --query "taskDefinition.taskDefinitionArn" \
     --output text)
+echo $ecs_task_definition
 
+ecs_service_database_name=database-service
 # Create Service
 aws ecs create-service \
-   --cluster $cluster_name \
-   --service-name database-service \
+   --cluster $ecs_cluster_name \
+   --service-name $ecs_service_database_name \
    --task-definition $ecs_task_definition \
    --desired-count 1 \
    --network-configuration "awsvpcConfiguration={subnets=[$subnet_public_1],securityGroups=[$security_group_id]}"
@@ -521,8 +511,8 @@ aws ecs create-service \
 ```shell
 cat <<EOF | tee backend-definition.json
 {
-    "name": "$backend_task_definition",
-    "image": "$backend_image",
+    "name": "$ecs_task_backend_name",
+    "image": "$ecs_task_backend_image",
     "portMappings": [
         {
             "containerPort": 8080,
@@ -532,7 +522,7 @@ cat <<EOF | tee backend-definition.json
     "environment" : [
         {
             "name" : "POSTGRES_HOST",
-            "value" : "10.0.4.247"
+            "value" : "$ecs_task_database_name"
         },
         {
             "name" : "POSTGRES_DB",
@@ -546,11 +536,12 @@ cat <<EOF | tee backend-definition.json
 }
 EOF
 ecs_backend_task_definition=$(aws ecs register-task-definition \
-    --family $backend_task_definition \
+    --family $ecs_task_backend_name \
     --network-mode awsvpc \
     --requires-compatibilities EC2 \
     --cpu "256" \
     --memory "512" \
+    --execution-role-arn "$ecs_task_role_arn" \
     --tags "$tags" \
     --container-definitions "`jq -c . backend-definition.json`" )
 
@@ -564,12 +555,15 @@ aws ecs list-task-definitions
 ## Create Service
 ```shell
 ecs_task_definition=$(aws ecs describe-task-definition \
-    --task-definition $backend_task_definition \
+    --task-definition $ecs_task_backend_name \
     --query "taskDefinition.taskDefinitionArn" \
     --output text)
+echo $ecs_task_definition
+
+ecs_service_backend_name=backend-service
 aws ecs create-service \
-   --cluster $cluster_name \
-   --service-name backend-service \
+   --cluster $ecs_cluster_name \
+   --service-name $ecs_service_backend_name \
    --task-definition $ecs_task_definition \
    --desired-count 1 \
    --network-configuration "awsvpcConfiguration={subnets=[$subnet_public_1],securityGroups=[$security_group_id]}"
@@ -636,24 +630,45 @@ aws ecs create-service \
 # Clean
 
 ```shell
+aws ec2 terminate-instances --instance-ids $ecs_ec2_id
+aws ec2 wait  instance-terminated --instance-ids $ecs_ec2_id
+
+aws iam remove-role-from-instance-profile \
+    --instance-profile-name $ecs_ec2_role_name \
+    --role-name $ecs_ec2_role_name
+aws iam delete-instance-profile --instance-profile-name $ecs_ec2_role_name
+aws iam detach-role-policy \
+    --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role \
+    --role-name $ecs_ec2_role_name
+aws iam detach-role-policy \
+    --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore \
+    --role-name $ecs_ec2_role_name
+aws iam delete-role --role-name $ecs_ec2_role_name
+aws ec2 delete-security-group --group-id $ecs_ec2_sgr_id
+aws ec2 delete-key-pair --key-name $ecs_ec2_key_name
+rm -f $ecs_ec2_key_name.pem
+
+aws ecs delete-service --cluster $ecs_cluster_name \
+    --service $ecs_service_database_name --force
+aws ecs delete-cluster --cluster $ecs_cluster_name
+aws iam delete-role-policy \
+    --role-name $ecs_task_role_name \
+    --policy-name $ecs_task_policy_name
+aws iam detach-role-policy \
+    --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly \
+    --role-name $ecs_task_role_name
+aws iam delete-role --role-name $ecs_task_role_name
+
 aws secretsmanager delete-secret --secret-id databaseSecret --force-delete-without-recovery
-aws ec2 delete-key-pair --key-name aws-container-deploy-keypair
 # delete EC2
-aws ec2 delete-security-group --group-id $security_group_id
 aws ec2 delete-subnet --subnet-id $subnet_public_1
 aws ec2 delete-subnet --subnet-id $subnet_public_2
 aws ec2 delete-subnet --subnet-id $subnet_private_1
 aws ec2 delete-subnet --subnet-id $subnet_private_2
-aws ec2 delete-route-table --route-table-id $public_route_table_id
-aws ec2 detach-internet-gateway --internet-gateway-id $gateway_id --vpc-id $vpc_id
+aws ec2 delete-route-table --route-table-id $rtb_public_id
+aws ec2 detach-internet-gateway \
+    --internet-gateway-id $gateway_id \
+    --vpc-id $vpc_id
 aws ec2 delete-internet-gateway --internet-gateway-id $gateway_id
 aws ec2 delete-vpc --vpc-id $vpc_id
-```
-
-
-## Delete ECS Cluster
-```shell
-# Delete Service
-# Delete Task definition
-aws ecs delete-cluster --cluster $cluster_name
 ```
