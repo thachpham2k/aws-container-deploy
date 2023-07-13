@@ -1,8 +1,47 @@
 **Deploy Container into ECS and using ALB to redirect connection, and RDS as Database Server**
 ===
 
-# Project init
+![Architecture](architect.png)
 
+The AWS system created using the AWS Command Line Interface (CLI) includes an Application Load Balancer (ALB), Amazon ECS with EC2 instances deployed using an Auto Scaling group, AWS Secrets Manager to securely store database information, and Amazon RDS for PostgreSQL.
+
+The system is deployed using AWS CLI and divided into several stages:
+- [Project init](#project-init)
+  * [AWS config](#aws-config)
+  * [Shell Variable](#shell-variable)
+- [Create Network](#create-network)
+  * [Create VPC](#create-vpc)
+  * [Create Subnet](#create-subnet)
+  * [Create Internet Gateway](#create-internet-gateway)
+  * [Create Routetable and Routing](#create-routetable-and-routing)
+- [Create RDS](#create-rds)
+  * [Create Subnet Group](#create-subnet-group)
+  * [Create Security group](#create-security-group)
+  * [Create RDS](#create-rds-1)
+- [Create Secret Manager](#create-secret-manager)
+- [Create ECS](#create-ecs)
+  * [Create ECS Cluster](#create-ecs-cluster)
+  * [Prepare to create EC2](#prepare-to-create-ec2)
+  * [Create auto scaling group](#create-auto-scaling-group)
+  * [Create EC2](#create-ec2)
+  * [Create Task Definition](#create-task-definition)
+  * [Create Service](#create-service)
+- [Create ALB](#create-alb)
+  * [Create Security Group for ALB](#create-security-group-for-alb)
+  * [Create ALB](#create-alb-1)
+  * [Update the ECS service to use your ALB](#update-the-ecs-service-to-use-your-alb)
+- [Check correct](#check-correct)
+  * [Get ALB public DNS](#get-alb-public-dns)
+- [Clean](#clean)
+  * [ALB](#alb)
+  * [ECS EC2](#ecs-ec2)
+  * [RDS](#rds)
+  * [ECS](#ecs)
+  * [Secret Manager](#secret-manager)
+  * [Network](#network)
+  * [ECR](#ecr)
+
+# Project init
 
 <details>
 <summary>AWS config</summary>
