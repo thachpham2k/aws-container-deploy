@@ -26,7 +26,7 @@ aws_account_id=$(aws sts get-caller-identity --query 'Account' --output text)
 # Private ECR repository
 aws ecr get-login-password --region $region | docker login --username AWS --password-stdin `aws sts get-caller-identity --query 'Account' --output text`.dkr.ecr.$region.amazonaws.com
 # Public ecr
-aws ecr-public get-login-password --region $region | docker login --username AWS --password-stdin public.ecr.aws/ecr_id`
+aws ecr-public get-login-password --region $region | docker login --username AWS --password-stdin public.ecr.aws/ecr_id
 # -> Docker Credential will save to ~/.docker/config.json file
 ```
 

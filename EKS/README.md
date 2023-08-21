@@ -68,6 +68,7 @@ curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$
 tar -xzf eksctl_$PLATFORM.tar.gz -C /tmp && rm eksctl_$PLATFORM.tar.gz
 
 sudo mv -v /tmp/eksctl /usr/local/bin
+eksctl info
 ```
 </details>
 <details>
@@ -89,7 +90,6 @@ tags2='[{"Key":"purpose", "Value":"test"}, {"Key":"project", "Value":"aws-contai
 tagspec='{Key=purpose,Value=test},{Key=project,Value=aws-container-deploy},{Key=author,Value=pthach}]'
 # Identity
 aws_account_id=$(aws sts get-caller-identity --query 'Account' --output text)
-eks_task_backend_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/backend-container:latest
 # network
 vpc_cidr=10.1.0.0/16
 pubsubnet1_cidr=10.1.0.0/20
@@ -323,9 +323,66 @@ aws ec2 create-key-pair \
 ```
 </details>
 
+## Create IAM
+
+<details>
+<summary>Create IAM for EKS</summary>
+
+```shell
+iam_role_name=$project-role
+iam_profile_name=$project-profile
+# Create EKS Role
+aws iam create-role \
+  --role-name $iam_role_name \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Principal": {
+        "Service": ["eks.amazonaws.com", "ec2.amazonaws.com"]
+      },
+      "Action": ["sts:AssumeRole"]
+    }]
+  }' \
+    --tags "$tags2"
+    
+aws iam attach-role-policy \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy \
+  --role-name $iam_role_name
+
+aws iam attach-role-policy \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEC2FullAccess \
+  --role-name $iam_role_name
+
+aws iam create-instance-profile \
+  --instance-profile-name $iam_profile_name
+
+aws iam add-role-to-instance-profile \
+  --instance-profile-name $iam_profile_name \
+  --role-name $iam_role_name
+
+iam_role_arn=$(aws iam get-role \
+  --role-name $iam_role_name \
+  --output text \
+  --query 'Role.Arn')
+
+iam_profile_arn=$(aws iam get-instance-profile \
+  --instance-profile-name $iam_profile_name \
+  --output text \
+  --query 'InstanceProfile.Arn')
+
+echo $iam_role_arn
+echo $iam_profile_arn
+```
+</details>
+
 ## Create ECR
 
 [Create ECR for Backend](../ECR/README.md)
+
+```shell
+eks_task_backend_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/container-image:latest
+```
 
 ## Create Cluster
 
@@ -359,10 +416,11 @@ kind: ClusterConfig
 metadata:
   name: $eks_cluster_name
   region: $region
+  version: "1.27"
 
-availabilityZones:
-  - $az_01
-  - $az_02
+# availabilityZones:
+#   - $az_01
+#   - $az_02
 
 vpc:
   subnets:
@@ -381,19 +439,7 @@ vpc:
 
 iam:
   withOIDC: true
-  withAddonPolicies :
-    imageBuilder: true
-    autoScaler: true
-    externalDNS: true
-    certManager: true
-    appMesh: true
-    appMeshPreview: true
-    ebs: true
-    fsx: true
-    efs: true
-    awsLoadBalancerController: true
-    xRay: true
-    cloudWatch: true 
+  vpcResourceControllerPolicy: true
 
 nodeGroups:
   - name: $eks_nodegroup_name
@@ -406,39 +452,42 @@ nodeGroups:
     subnets:
       - public-01
     ssh:
-      allowPublicSSHKeyRetrieval: true
-      publicKeyName:$keypair_name
+      # enableSsm: true
+      publicKeyName: $keypair_name
     iam:
-      instanceProfileARN: "arn:aws:iam::123:instance-profile/eksctl-test-cluster-a-3-nodegroup-ng2-private-NodeInstanceProfile-Y4YKHLNINMXC"
-      instanceRoleARN: "arn:aws:iam::123:role/eksctl-test-cluster-a-3-nodegroup-NodeInstanceRole-DNGMQTQHQHBJ"
-      withAddonPolicies:
-        autoScaler: true
-        imageBuilder: true
-managedNodeGroup:
-  enabled : true
-
-addons:
-  albIngress :
-    enabled : true
+      instanceProfileARN: "$iam_profile_arn"
+      instanceRoleARN: "$iam_role_arn"
+      # withAddonPolicies:
+      #   albIngress: true
+      #   imageBuilder: true
+      #   # autoScaler: true
+      #   # externalDNS: true
+      #   certManager: true
+      #   # appMesh: true
+      #   # appMeshPreview: true
+      #   ebs: true
+      #   # fsx: true
+      #   # efs: true
+      #   awsLoadBalancerController: true
+      #   # xRay: true
+      #   cloudWatch: true 
 EOF
 
 # Create Cluster
-eksctl create cluster -f cluster.yaml
+eksctl create cluster -f manifest/cluster.yaml --version=1.27
 
 
 # Get List of cluster
 eksctl get cluster
 
 # Delete Cluster
-eksctl delete cluster -f cluster.yaml
+eksctl delete cluster -f manifest/cluster.yaml
 ```
 </details>
 <details>
 <summary>Using CLI</summary>
 
 ```shell
-
-
 # Create Cluster
 eksctl create cluster \
   --name=$eks_cluster_name \
@@ -487,12 +536,14 @@ eksctl create nodegroup \
 </summary>
 
 ```shell
+eks_secret_db_name=$project-eks-secret-db
+eks_sevice_db_name=$project-eks-svc-db
 cat <<EOF | tee manifest/mysql.yaml
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: postgres-db-password
+  name: $eks_secret_db_name
 type: Opaque
 data: 
   db-password: $db_password
@@ -548,7 +599,7 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: postgres-db-password
+                  name: $eks_secret_db_name
                   key: db-password
           ports:
             - containerPort: 5432
@@ -569,7 +620,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres
+  name: $eks_sevice_db_name
 spec:
   selector:
     app: postgres
@@ -614,7 +665,7 @@ spec:
             - containerPort: 8080           
           env:
             - name: POSTGRES_HOST
-              value: "postgres"                      
+              value: "$eks_sevice_db_name"                      
             - name: POSTGRES_DB
               value: "$db_name"            
             - name: DB_PASSWORD
