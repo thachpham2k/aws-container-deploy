@@ -12,63 +12,48 @@ This project is in progress
     - Install AWS CLI
     - Install kubectl CLI
     - Install eksctl CLI
+- Install tools
 - Shell Variable
 </summary><br>
 
 <details>
-<summary>Install AWS CLI</summary>
+<summary>Install CLI</summary>
 
-```shell
-# sudo apt install awscli -y
-# aws --version
-# aws configure
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip awscliv2.zip
-sudo ./aws/install --update # hoặc sudo ./aws/install nếu gặp lỗi
-aws --version
-```
-</details>
-<details>
-<summary>Install kubectl CLI</summary>
 <a href="https://docs.aws.amazon.com/eks/latest/userguide/install-kubectl.html">Installing or updating kubectl</a>
-
-```shell
-kubectl version --short --client
-cd ~
-mkdir kuberctl
-cd kuberctl
-# Download the Package
-curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.27.1/2023-04-19/bin/linux/amd64/kubectl
-# Provide execute permissions
-chmod +x ./kubectl
-# Set the Path by copying to user Home Directory
-mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$HOME/bin:$PATH
-echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc
-# Verify the kubectl version
-kubectl version --short --client
-```
-</details>
-<details>
-<summary>
-Install eksctl CLI
-
-</summary>
-
+<br>
 <a href="https://docs.aws.amazon.com/eks/latest/userguide/eksctl.html">Installing or updating eksctl</a>
 <br>
 <a href="https://github.com/eksctl-io/eksctl/blob/main/README.md#installation">Eksctl</a>
 
 ```shell
-# for ARM systems, set ARCH to: `arm64`, `armv6` or `armv7`
+# awscliv1
+# sudo apt install awscli -y
+
+# awscliv2
+source ../script/install_awscliv2.sh
+
+aws --version
+
+# kubectl
+source ../script/install_kubectl.sh
+
+kubectl version --short --client
+
+# eksctl
+## for ARM systems, set ARCH to: `arm64`, `armv6` or `armv7`
 ARCH=amd64
 PLATFORM=$(uname -s)_$ARCH
-# Download the Package (curl --silent --location)
-curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$PLATFORM.tar.gz"
-# extract
-tar -xzf eksctl_$PLATFORM.tar.gz -C /tmp && rm eksctl_$PLATFORM.tar.gz
+source ../script/install_eksctl.sh
 
-sudo mv -v /tmp/eksctl /usr/local/bin
 eksctl info
+```
+</details>
+<details>
+<summary>Install tools</summary>
+
+## Install tools
+```shell
+sudo apt install jq -y
 ```
 </details>
 <details>
@@ -85,9 +70,9 @@ az_01=ap-southeast-1a
 az_02=ap-southeast-1b
 az_03=ap-southeast-1c
 # tags
-tags='[{"key":"purpose", "value":"test"}, {"key":"project", "value":"aws-container-deploy"}, {"key":"author", "value":"pthach"}]'
-tags2='[{"Key":"purpose", "Value":"test"}, {"Key":"project", "Value":"aws-container-deploy"}, {"Key":"author", "Value":"pthach"}]'
-tagspec='{Key=purpose,Value=test},{Key=project,Value=aws-container-deploy},{Key=author,Value=pthach}]'
+tags='[{"Key":"purpose", "Value":"test"}, {"Key":"project", "Value":"aws-container-deploy"}, {"Key":"author", "Value":"pthach"}]'
+tags2='[{"key":"purpose", "value":"test"}, {"key":"project", "value":"aws-container-deploy"}, {"key":"author", "value":"pthach"}]'
+tagspec='{Key=purpose,Value=test},{Key=project,Value=aws-container-deploy},{Key=author,Value=pthach}'
 # Identity
 aws_account_id=$(aws sts get-caller-identity --query 'Account' --output text)
 # network
@@ -121,10 +106,11 @@ db_password=$(cat db_password | base64)
 
 <details>
 <summary>
-Shell Variable
+VPC, Subnet, IGW, RTB
 </summary>
 
 ```shell
+# Name Tags
 vpc_name=$project-vpc
 pubsubnet1_name=$project2-pubsubnet-$az_01
 pubsubnet2_name=$project2-pubsubnet-$az_02
@@ -134,131 +120,17 @@ prisubnet2_name=$project2-prisubnet-$az_02
 prisubnet3_name=$project2-prisubnet-$az_03
 igw_name=$project2-igw
 rtb_name=$project2-rtb
-sgr_name=$project2-sgr
-```
-</details>
-<details>
-<summary>
-VPC
-</summary>
 
-```shell
-# Create VPC
-vpc_id=$(aws ec2 create-vpc \
-    --cidr-block $vpc_cidr \
-    --region $region \
-    --tag-specifications `echo 'ResourceType=vpc,Tags=[{Key=Name,Value='$vpc_name'},'$tagspec` \
-    --output text \
-    --query 'Vpc.VpcId')
-
-# Enable dns-hostname feature in vpc
-aws ec2 modify-vpc-attribute \
-    --vpc-id $vpc_id \
-    --enable-dns-hostnames '{"Value": true}'
+source ../script/create_network_3az.sh
 
 echo $vpc_id
-```
-</details>
-<details>
-<summary>
-Subnet
-</summary>
-
-```shell
-# Create subnet
-subnet_public_1=$(aws ec2 create-subnet \
-    --availability-zone $az_01 \
-    --cidr-block $pubsubnet1_cidr \
-    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$pubsubnet1_name'},'$tagspec` \
-    --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
-
-subnet_public_2=$(aws ec2 create-subnet \
-    --availability-zone $az_02 \
-    --cidr-block $pubsubnet2_cidr \
-    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$pubsubnet2_name'},'$tagspec` \
-    --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
-
-subnet_public_3=$(aws ec2 create-subnet \
-    --availability-zone $az_03 \
-    --cidr-block $pubsubnet3_cidr \
-    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$pubsubnet3_name'},'$tagspec` \
-    --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
-
-subnet_private_1=$(aws ec2 create-subnet \
-    --availability-zone $az_01 \
-    --cidr-block $prisubnet1_cidr \
-    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$prisubnet1_name'},'$tagspec` \
-    --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
-
-subnet_private_2=$(aws ec2 create-subnet \
-    --availability-zone $az_02 \
-    --cidr-block $prisubnet2_cidr \
-    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$prisubnet2_name'},'$tagspec` \
-    --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
-
-subnet_private_3=$(aws ec2 create-subnet \
-    --availability-zone $az_03 \
-    --cidr-block $prisubnet3_cidr \
-    --tag-specifications `echo 'ResourceType=subnet,Tags=[{Key=Name,Value='$prisubnet3_name'},'$tagspec` \
-    --vpc-id $vpc_id | jq -r '.Subnet.SubnetId')
-
 echo $subnet_public_1
 echo $subnet_public_2
 echo $subnet_public_3
 echo $subnet_private_1
 echo $subnet_private_2
 echo $subnet_private_3
-```
-</details>
-<details>
-<summary>
-internetGateway
-</summary>
-
-```shell
-# Create Internet Gateway
-gateway_id=$(aws ec2 create-internet-gateway \
-    --region $region \
-    --tag-specifications `echo 'ResourceType=internet-gateway,Tags=[{Key=Name,Value='$igw_name'},'$tagspec` \
-    --output text \
-    --query 'InternetGateway.InternetGatewayId')
-
-aws ec2 attach-internet-gateway \
-    --vpc-id $vpc_id \
-    --internet-gateway-id $gateway_id
-
 echo $gateway_id
-```
-</details>
-<details>
-<summary>
-RouteTable
-</summary>
-
-```shell
-# Create Route table
-rtb_public_id=$(aws ec2 create-route-table \
-    --tag-specifications `echo 'ResourceType=route-table,Tags=[{Key=Name,Value='$rtb_name'},'$tagspec` \
-    --vpc-id $vpc_id | jq -r '.RouteTable.RouteTableId')
-
-aws ec2 create-route \
-    --route-table-id $rtb_public_id \
-    --destination-cidr-block 0.0.0.0/0 \
-    --gateway-id $gateway_id
-
-# Associate each public subnet with the public route table
-aws ec2 associate-route-table \
-    --subnet-id $subnet_public_1 \
-    --route-table-id $rtb_public_id
-
-aws ec2 associate-route-table \
-    --subnet-id $subnet_public_2 \
-    --route-table-id $rtb_public_id
-
-aws ec2 associate-route-table \
-    --subnet-id $subnet_public_3 \
-    --route-table-id $rtb_public_id
-
 echo $rtb_public_id
 ```
 </details>
@@ -268,36 +140,11 @@ SecurityGroup
 </summary>
 
 ```shell
-# Create Security Group
-sgr_id=$(aws ec2 create-security-group \
-    --group-name $sgr_name \
-    --description "Security group for EKS" \
-    --tag-specifications `echo 'ResourceType=security-group,Tags=['$tagspec` \
-    --vpc-id $vpc_id | jq -r '.GroupId')
+# Name Tags
+sgr_name=$project2-sgr
+sgr_rules=( 80 22 5432 8080 )
 
-aws ec2 authorize-security-group-ingress \
-   --group-id $sgr_id \
-   --protocol tcp \
-   --port 80 \
-   --cidr 0.0.0.0/0
-
-aws ec2 authorize-security-group-ingress \
-   --group-id $sgr_id \
-   --protocol tcp \
-   --port 22 \
-   --cidr 0.0.0.0/0
-
-aws ec2 authorize-security-group-ingress \
-   --group-id $sgr_id \
-   --protocol tcp \
-   --port 5432 \
-   --cidr 0.0.0.0/0
-
-aws ec2 authorize-security-group-ingress \
-   --group-id $sgr_id \
-   --protocol tcp \
-   --port 8080 \
-   --cidr 0.0.0.0/0
+source ../script/create_network_sgr.sh
 
 echo $sgr_id
 ```
@@ -313,13 +160,9 @@ echo $sgr_id
 
 ```shell
 keypair_name=$project-keypair
+keypair_dst="../EKS/$keypair_name.pem"
 # Create Keypair
-aws ec2 create-key-pair \
-    --key-name $keypair_name \
-    --region $region \
-    --tag-specifications `echo 'ResourceType=key-pair,Tags=['$tagspec` \
-    --query 'KeyMaterial' \
-    --output text > ./$keypair_name.pem
+source ../script/create_ec2_keypair.sh
 ```
 </details>
 
@@ -331,45 +174,12 @@ aws ec2 create-key-pair \
 ```shell
 iam_role_name=$project-role
 iam_profile_name=$project-profile
-# Create EKS Role
-aws iam create-role \
-  --role-name $iam_role_name \
-  --assume-role-policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Allow",
-      "Principal": {
-        "Service": ["eks.amazonaws.com", "ec2.amazonaws.com"]
-      },
-      "Action": ["sts:AssumeRole"]
-    }]
-  }' \
-    --tags "$tags2"
-    
-aws iam attach-role-policy \
-  --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy \
-  --role-name $iam_role_name
+iam_principal_service='"eks.amazonaws.com","ec2.amazonaws.com"'
+iam_default_policies=( arn:aws:iam::aws:policy/AmazonEKSClusterPolicy arn:aws:iam::aws:policy/AmazonEC2FullAccess arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilderECRContainerBuilds )
+iam_custom_policy_name=
+iam_custom_policy_file=
 
-aws iam attach-role-policy \
-  --policy-arn arn:aws:iam::aws:policy/AmazonEC2FullAccess \
-  --role-name $iam_role_name
-
-aws iam create-instance-profile \
-  --instance-profile-name $iam_profile_name
-
-aws iam add-role-to-instance-profile \
-  --instance-profile-name $iam_profile_name \
-  --role-name $iam_role_name
-
-iam_role_arn=$(aws iam get-role \
-  --role-name $iam_role_name \
-  --output text \
-  --query 'Role.Arn')
-
-iam_profile_arn=$(aws iam get-instance-profile \
-  --instance-profile-name $iam_profile_name \
-  --output text \
-  --query 'InstanceProfile.Arn')
+source ../script/create_iam_role_n_instance_profile.sh
 
 echo $iam_role_arn
 echo $iam_profile_arn
@@ -380,9 +190,20 @@ echo $iam_profile_arn
 
 [Create ECR for Backend](../ECR/README.md)
 
+<details>
+<summary>Create ECR Repository</summary>
+
 ```shell
-eks_task_backend_image=$aws_account_id.dkr.ecr.$region.amazonaws.com/container-image:latest
+repo_name='container-image'
+src_dir='../src/backend'
+
+source ../script/create_ecr.sh
+
+echo $ecr_image_uri
+
+eks_task_backend_image=$ecr_image_uri
 ```
+</details>
 
 ## Create Cluster
 
@@ -476,9 +297,11 @@ EOF
 # Create Cluster
 eksctl create cluster -f manifest/cluster.yaml --version=1.27
 
-
 # Get List of cluster
 eksctl get cluster
+
+# Connect to EKS
+aws eks update-kubeconfig --region $region --name $eks_cluster_name
 
 # Delete Cluster
 eksctl delete cluster -f manifest/cluster.yaml
@@ -640,7 +463,7 @@ EOF
 </summary>
 
 ```shell
-cat <<EOF | tee manifest/mysql.yaml
+cat <<EOF | tee manifest/backend.yaml
 ---
 apiVersion: apps/v1
 kind: Deployment 
@@ -660,7 +483,7 @@ spec:
     spec:
       containers:
         - name: backend-restapp
-          image: $ecr???
+          image: $eks_task_backend_image
           ports: 
             - containerPort: 8080           
           env:
@@ -671,7 +494,7 @@ spec:
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: postgres-db-password
+                  name: $eks_secret_db_name
                   key: db-password      
 ---
 apiVersion: v1
@@ -701,8 +524,33 @@ EOF
 </summary>
 
 ```shell
-cat <<EOF | tee manifest/mysql.yaml
+cat <<EOF | tee manifest/alb.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-alb-service
+spec:
+  selector:
+    app: my-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080       # The port your application is listening on
 
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: my-alb-ingress          # Name of the ALB Ingress resource 
+spec:
+  rules:
+    - http:
+        paths:
+          - pathType: Prefix     # Path type can be either "Prefix" or "Exact"
+            path:/               # The URL path that will route traffic to your service/app   
+            backend:
+              serviceName : my-alb-service   # Name of the service defined above in 'metadata.name'
+              servicePort : 80                # Port number defined in 'spec.ports.port'
 EOF
 ```
 </details>
@@ -715,5 +563,18 @@ EOF
 </summary>
 
 ```shell
+kubectl delete -f manifest/backend.yaml
+kubectl delete -f manifest/mysql.yaml 
+eksctl delete cluster -f manifest/cluster.yaml
+
+# ECR
+source ../script/delete_ecr.sh
+# IAM
+source ../script/delete_iam_role_n_instance_profile.sh
+# Keypair
+source ../script/delete_ec2_keypair.sh
+# Network
+source ../script/delete_network_sgr.sh 
+source ../script/delete_network_3az.sh 
 ```
 </details>
